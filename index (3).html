@@ -1,0 +1,263 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>Fire & Ice — Luxury Staff Portal</title>
+<script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+<script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+<script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+<script src="https://cdn.tailwindcss.com"></script>
+<link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;600;800&display=swap" rel="stylesheet"/>
+<style>
+:root { --primary: #ff6b2b; --ice: #00d4ff; --bg: #ffffff; --text: #0f172a; --border: #e2e8f0; }
+body { font-family: 'Outfit', sans-serif; background-color: var(--bg); color: var(--text); }
+
+.lounge-card {
+  background: white;
+  border: 1px solid transparent;
+  background-image: linear-gradient(white, white), linear-gradient(135deg, var(--primary), var(--ice));
+  background-origin: border-box;
+  background-clip: padding-box, border-box;
+  box-shadow: 0 10px 40px rgba(0,0,0,0.04);
+  border-radius: 24px;
+}
+
+.shimmer-btn {
+  background: linear-gradient(90deg, var(--primary), #ff8c42, var(--ice), var(--primary));
+  background-size: 300% auto;
+  color: white;
+  font-weight: 800;
+  padding: 12px 28px;
+  border-radius: 14px;
+  animation: shimmer 5s infinite linear;
+}
+@keyframes shimmer { 0% { background-position: 0% center; } 100% { background-position: 300% center; } }
+
+.input-field { background: #f1f5f9; border-radius: 12px; padding: 12px; width: 100%; outline: none; border: 1px solid transparent; transition: 0.2s; }
+.input-field:focus { border-color: var(--primary); background: white; }
+</style>
+</head>
+<body>
+<div id="root"></div>
+<script type="text/babel">
+const { useState, useEffect } = React;
+
+const money = (n) => '$' + (+(n || 0)).toFixed(2);
+const calcHours = (s, e) => {
+  if (!s || !e) return 0;
+  const [sh, sm] = s.split(':').map(Number);
+  const [eh, em] = e.split(':').map(Number);
+  let mins = (eh * 60 + em) - (sh * 60 + sm);
+  if (mins <= 0) mins += 1440;
+  return Math.round(mins * 10 / 60) / 10;
+};
+
+const store = {
+  get: (k) => JSON.parse(localStorage.getItem(k) || '[]'),
+  set: (k, v) => localStorage.setItem(k, JSON.stringify(v))
+};
+
+function downloadShiftsCSV(data, role) {
+  if (!data || !data.length) return alert("No shifts to export.");
+  const headers = role === 'admin' 
+    ? ["Date", "Staff Name", "Start Time", "End Time", "Vibe", "Hours", "Earned ($)"]
+    : ["Date", "Start Time", "End Time", "Vibe", "Hours", "Earned ($)"];
+
+  const rows = [];
+  let tH = 0; let tP = 0;
+
+  data.forEach(s => {
+    tH += (s.hours || 0); tP += (s.earned || 0);
+    const row = role === 'admin'
+      ? [s.date, s.userName, s.startTime, s.endTime, s.vibe, s.hours, s.earned.toFixed(2)]
+      : [s.date, s.startTime, s.endTime, s.vibe, s.hours, s.earned.toFixed(2)];
+    rows.push(row.map(v => `"${v}"`).join(","));
+  });
+
+  const totalRow = role === 'admin' 
+    ? ["TOTAL", "", "", "", "", tH.toFixed(2), tP.toFixed(2)]
+    : ["TOTAL", "", "", "", tH.toFixed(2), tP.toFixed(2)];
+  rows.push(totalRow.join(","));
+
+  const blob = new Blob([headers.join(",") + "\n" + rows.join("\n")], { type: "text/csv;charset=utf-8;" });
+  const link = document.createElement("a");
+  link.href = URL.createObjectURL(blob);
+  link.download = `Fire_Ice_Report.csv`;
+  link.click();
+}
+
+// Admin Identity updated for privacy
+const ADMIN_USER = { id: 'admin-root', displayName: 'Lounge Owner', email: 'admin', password: 'admin123', role: 'admin', rate: 0 };
+
+function App() {
+  const [user, setUser] = useState(JSON.parse(localStorage.getItem('session') || 'null'));
+  const [view, setView] = useState('login'); 
+  const [shifts, setShifts] = useState(store.get('shifts'));
+  const [users, setUsers] = useState(store.get('users'));
+
+  const [regName, setRegName] = useState('');
+  const [regEmail, setRegEmail] = useState('');
+  const [regPass, setRegPass] = useState('');
+  const [regRate, setRegRate] = useState(15);
+  const [startTime, setStartTime] = useState('18:00');
+  const [endTime, setEndTime] = useState('23:00');
+  const [shiftDate, setShiftDate] = useState(new Date().toISOString().split('T')[0]);
+  const [shiftVibe, setShiftVibe] = useState('❄️ Chill');
+
+  const handleRegister = (e) => {
+    e.preventDefault();
+    const newUser = { id: Date.now(), name: regName, email: regEmail.toLowerCase(), password: regPass, rate: Number(regRate), role: 'staff' };
+    const updated = [...users, newUser];
+    setUsers(updated); store.set('users', updated);
+    setView('login');
+  };
+
+  const handleLogin = (e) => {
+    e.preventDefault();
+    const em = document.getElementById('logEmail').value.toLowerCase();
+    const ps = document.getElementById('logPass').value;
+    
+    if (em === 'admin' && ps === 'admin123') {
+      setUser(ADMIN_USER); 
+      localStorage.setItem('session', JSON.stringify(ADMIN_USER));
+      return;
+    }
+    
+    const found = users.find(u => u.email === em && u.password === ps);
+    if (found) { setUser(found); localStorage.setItem('session', JSON.stringify(found)); }
+    else alert("Access Denied");
+  };
+
+  const addShift = () => {
+    const hrs = calcHours(startTime, endTime);
+    const newShift = { id: Date.now(), userId: user.id, userName: user.name || user.displayName, date: shiftDate, startTime, endTime, hours: hrs, earned: hrs * user.rate, vibe: shiftVibe };
+    const updated = [...shifts, newShift];
+    setShifts(updated); store.set('shifts', updated);
+    alert("Session Recorded!");
+  };
+
+  const deleteShift = (id) => {
+    if(window.confirm("Delete record?")) {
+      const u = shifts.filter(s => s.id !== id);
+      setShifts(u); store.set('shifts', u);
+    }
+  };
+
+  const visibleShifts = user?.role === 'admin' ? shifts : shifts.filter(s => s.userId === user?.id);
+  const totalEarned = visibleShifts.reduce((a, b) => a + b.earned, 0);
+
+  if (!user) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-slate-50 p-6">
+        <div className="lounge-card w-full max-w-md p-10 text-center space-y-8">
+          <h1 className="text-4xl font-black tracking-tighter">FIRE & <span className="text-cyan-400">ICE</span></h1>
+          <div className="flex bg-slate-100 p-1 rounded-xl">
+            <button onClick={() => setView('login')} className={`flex-1 py-2 rounded-lg font-bold ${view === 'login' ? 'bg-white shadow-sm' : ''}`}>Login</button>
+            <button onClick={() => setView('register')} className={`flex-1 py-2 rounded-lg font-bold ${view === 'register' ? 'bg-white shadow-sm' : ''}`}>Register</button>
+          </div>
+          {view === 'login' ? (
+            <div className="space-y-4">
+              <input id="logEmail" type="text" placeholder="Username" className="input-field" />
+              <input id="logPass" type="password" placeholder="Password" className="input-field" />
+              <button onClick={handleLogin} className="shimmer-btn w-full">Enter Lounge</button>
+            </div>
+          ) : (
+            <form onSubmit={handleRegister} className="space-y-4 text-left">
+              <input type="text" placeholder="Full Name" className="input-field" required onChange={e => setRegName(e.target.value)} />
+              <input type="email" placeholder="Email" className="input-field" required onChange={e => setRegEmail(e.target.value)} />
+              <input type="password" placeholder="Password" className="input-field" required onChange={e => setRegPass(e.target.value)} />
+              <input type="number" placeholder="Rate ($)" className="input-field" required onChange={e => setRegRate(e.target.value)} />
+              <button className="shimmer-btn w-full">Join Team</button>
+            </form>
+          )}
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="min-h-screen flex flex-col md:flex-row bg-white">
+      <aside className="w-full md:w-64 border-r p-8 flex flex-col bg-white">
+        <h2 className="text-2xl font-black tracking-tighter mb-10">FIRE & <span className="text-cyan-400">ICE</span></h2>
+        <div className="flex-1 space-y-4">
+          <div className="p-4 bg-slate-50 rounded-2xl border border-slate-100">
+            <p className="font-extrabold text-slate-800">{user.displayName || user.name}</p>
+          </div>
+        </div>
+        <button onClick={() => { localStorage.removeItem('session'); setUser(null); }} className="text-left text-sm font-bold text-slate-400 hover:text-red-500 transition-colors">SIGN OUT ⏻</button>
+      </aside>
+
+      <main className="flex-1 p-8 md:p-16 max-w-6xl">
+        <header className="flex justify-between items-center mb-10">
+          <h1 className="text-4xl font-black uppercase tracking-tighter">{user.role === 'admin' ? 'Business Pulse' : 'My Dashboard'}</h1>
+          <button onClick={() => downloadShiftsCSV(visibleShifts, user.role)} className="px-5 py-2 border rounded-xl font-bold text-sm hover:border-orange-500 transition-all">📥 Export CSV</button>
+        </header>
+
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-8 mb-10">
+          <div className="lounge-card p-8 border-l-8 border-l-orange-500">
+            <p className="text-xs font-black text-slate-400 uppercase tracking-widest mb-2">Total {user.role === 'admin' ? 'Payouts' : 'Earned'}</p>
+            <p className="text-5xl font-black">{money(totalEarned)}</p>
+          </div>
+          <div className="lounge-card p-8 border-l-8 border-l-cyan-500">
+            <p className="text-xs font-black text-slate-400 uppercase tracking-widest mb-2">Shift Records</p>
+            <p className="text-5xl font-black">{visibleShifts.length}</p>
+          </div>
+        </div>
+
+        {user.role !== 'admin' && (
+          <div className="lounge-card p-10 mb-10 space-y-6">
+            <h3 className="text-xl font-bold">New Session Log</h3>
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+              <input type="date" className="input-field" value={shiftDate} onChange={e => setShiftDate(e.target.value)} />
+              <input type="time" className="input-field" value={startTime} onChange={e => setStartTime(e.target.value)} />
+              <input type="time" className="input-field" value={endTime} onChange={e => setEndTime(e.target.value)} />
+            </div>
+            <div className="flex flex-wrap gap-4 items-center justify-between border-t pt-6">
+              <div className="flex gap-2">
+                {['❄️ Chill', '🔥 Busy', '🎉 Party'].map(v => (
+                  <button key={v} onClick={() => setShiftVibe(v)} className={`px-4 py-2 rounded-xl text-xs font-bold border transition-all ${shiftVibe === v ? 'bg-slate-900 text-white border-slate-900' : 'bg-white border-slate-200'}`}>{v}</button>
+                ))}
+              </div>
+              <button onClick={addShift} className="shimmer-btn">Submit Shift</button>
+            </div>
+          </div>
+        )}
+
+        <div className="lounge-card overflow-hidden">
+          <table className="w-full text-left">
+            <thead className="bg-slate-50 border-b">
+              <tr>
+                <th className="p-6 text-xs font-black text-slate-400">DATE</th>
+                {user.role === 'admin' && <th className="p-6 text-xs font-black text-slate-400">STAFF</th>}
+                <th className="p-6 text-xs font-black text-slate-400">VIBE</th>
+                <th className="p-6 text-xs font-black text-slate-400">TIME</th>
+                <th className="p-6 text-xs font-black text-slate-400 text-right">PAYOUT</th>
+                <th className="p-6"></th>
+              </tr>
+            </thead>
+            <tbody>
+              {visibleShifts.slice().reverse().map(s => (
+                <tr key={s.id} className="border-b hover:bg-slate-50 transition-colors">
+                  <td className="p-6 font-bold">{s.date}</td>
+                  {user.role === 'admin' && <td className="p-6 font-medium text-slate-600">{s.userName}</td>}
+                  <td className="p-6"><span className="px-3 py-1 bg-white border rounded-full text-[10px] font-black">{s.vibe}</span></td>
+                  <td className="p-6 text-slate-500 font-mono text-sm">{s.startTime}-{s.endTime} ({s.hours}h)</td>
+                  <td className="p-6 font-black text-right">{money(s.earned)}</td>
+                  <td className="p-6 text-right">
+                    <button onClick={() => deleteShift(s.id)} className="text-slate-300 hover:text-red-500 font-bold transition-colors">×</button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </main>
+    </div>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+</script>
+</body>
+</html>
