@@ -52,8 +52,9 @@ const { useState, useEffect, useMemo } = React;
 // ==========================================
 // 1. INITIALIZE SUPABASE
 // ==========================================
-const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
-const supabaseKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
+// REPLACE THESE WITH YOUR ACTUAL SUPABASE CREDENTIALS
+const supabaseUrl = 'YOUR_SUPABASE_URL'; 
+const supabaseKey = 'YOUR_SUPABASE_ANON_KEY';
 const supabase = window.supabase.createClient(supabaseUrl, supabaseKey);
 
 // ==========================================
@@ -245,6 +246,10 @@ function App() {
   const [regEmail, setRegEmail] = useState('');
   const [regPass, setRegPass] = useState('');
   const [regRate, setRegRate] = useState(15);
+
+  // New state variables for proper React login form handling
+  const [logEmail, setLogEmail] = useState('');
+  const [logPass, setLogPass] = useState('');
   
   const [startTime, setStartTime] = useState('18:00');
   const [endTime, setEndTime] = useState('23:00');
@@ -277,7 +282,6 @@ function App() {
       .single();
 
     if (data) {
-      // Determine role based on email
       const isLoungeOwner = data.email.includes('admin'); 
       setUser({
         id: authUser.id,
@@ -310,15 +314,13 @@ function App() {
     }
   };
 
-  // SUPABASE: Real Login Function
+  // SUPABASE: Real Login Function (Refactored to use state)
   const handleLogin = async (e) => {
     e.preventDefault();
-    const em = document.getElementById('logEmail').value.toLowerCase();
-    const ps = document.getElementById('logPass').value;
     
     const { data, error } = await supabase.auth.signInWithPassword({
-      email: em,
-      password: ps
+      email: logEmail.toLowerCase(),
+      password: logPass
     });
 
     if (error) {
@@ -394,18 +396,18 @@ function App() {
             <button onClick={() => setView('register')} className={`flex-1 py-2 rounded-lg font-bold ${view === 'register' ? 'bg-white shadow-sm' : ''}`}>Register</button>
           </div>
           {view === 'login' ? (
-            <div className="space-y-4">
-              <input id="logEmail" type="email" placeholder="Email Address" className="input-field" />
-              <input id="logPass" type="password" placeholder="Password" className="input-field" />
-              <button onClick={handleLogin} className="shimmer-btn w-full">Enter Lounge</button>
-            </div>
+            <form onSubmit={handleLogin} className="space-y-4">
+              <input type="email" placeholder="Email Address" className="input-field" required value={logEmail} onChange={e => setLogEmail(e.target.value)} />
+              <input type="password" placeholder="Password" className="input-field" required value={logPass} onChange={e => setLogPass(e.target.value)} />
+              <button type="submit" className="shimmer-btn w-full">Enter Lounge</button>
+            </form>
           ) : (
             <form onSubmit={handleRegister} className="space-y-4 text-left">
-              <input type="text" placeholder="Full Name" className="input-field" required onChange={e => setRegName(e.target.value)} />
-              <input type="email" placeholder="Email" className="input-field" required onChange={e => setRegEmail(e.target.value)} />
-              <input type="password" placeholder="Password" className="input-field" required onChange={e => setRegPass(e.target.value)} />
-              <input type="number" placeholder="Rate ($)" className="input-field" required onChange={e => setRegRate(e.target.value)} />
-              <button className="shimmer-btn w-full">Join Team</button>
+              <input type="text" placeholder="Full Name" className="input-field" required value={regName} onChange={e => setRegName(e.target.value)} />
+              <input type="email" placeholder="Email" className="input-field" required value={regEmail} onChange={e => setRegEmail(e.target.value)} />
+              <input type="password" placeholder="Password" className="input-field" required value={regPass} onChange={e => setRegPass(e.target.value)} />
+              <input type="number" placeholder="Rate ($)" className="input-field" required value={regRate} onChange={e => setRegRate(e.target.value)} />
+              <button type="submit" className="shimmer-btn w-full">Join Team</button>
             </form>
           )}
         </div>
@@ -419,7 +421,6 @@ function App() {
         <h2 className="text-2xl font-black tracking-tighter mb-10">FIRE & <span className="text-cyan-400">ICE</span></h2>
         <div className="flex-1 space-y-4">
           <div className="p-4 bg-slate-50 rounded-2xl border border-slate-100">
-            {/* Privacy Override: Display generalized workspace name instead of full name */}
             <p className="font-extrabold text-slate-800">My Workspace</p>
           </div>
         </div>
