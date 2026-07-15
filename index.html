@@ -8,6 +8,7 @@
 <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
 <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
 <script src="https://cdn.tailwindcss.com"></script>
+<script src="https://unpkg.com/@supabase/supabase-js@2"></script>
 <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;600;800&display=swap" rel="stylesheet"/>
 <style>
 :root { --primary: #ff6b2b; --ice: #00d4ff; --bg: #ffffff; --text: #0f172a; --border: #e2e8f0; }
@@ -48,6 +49,16 @@ body { font-family: 'Outfit', sans-serif; background-color: var(--bg); color: va
 <script type="text/babel">
 const { useState, useEffect, useMemo } = React;
 
+// ==========================================
+// 1. INITIALIZE SUPABASE
+// ==========================================
+const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
+const supabaseKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
+const supabase = window.supabase.createClient(supabaseUrl, supabaseKey);
+
+// ==========================================
+// HELPER FUNCTIONS
+// ==========================================
 const money = (n) => '$' + (+(n || 0)).toFixed(2);
 const calcHours = (s, e) => {
   if (!s || !e) return 0;
@@ -58,6 +69,7 @@ const calcHours = (s, e) => {
   return Math.round(mins * 10 / 60) / 10;
 };
 
+// Temporarily keeping local storage for shifts/goals until backend tables are built
 const store = {
   get: (k) => JSON.parse(localStorage.getItem(k) || '[]'),
   set: (k, v) => localStorage.setItem(k, JSON.stringify(v)),
@@ -65,7 +77,6 @@ const store = {
   setObj: (k, v) => localStorage.setItem(k, JSON.stringify(v))
 };
 
-// ---- Paycheck helpers ----
 const MONTH_NAMES = ['January','February','March','April','May','June','July','August','September','October','November','December'];
 const paycheckOf = (dateStr) => {
   const day = parseInt(dateStr.split('-')[2], 10);
@@ -77,7 +88,6 @@ const formatMonthKey = (key) => {
   return `${MONTH_NAMES[parseInt(m,10) - 1]} ${y}`;
 };
 
-// ---- CSV ----
 function downloadShiftsCSV(data, role) {
   if (!data || !data.length) return alert("No shifts to export.");
   const headers = role === 'admin' 
@@ -104,9 +114,9 @@ function downloadShiftsCSV(data, role) {
   link.click();
 }
 
-const ADMIN_USER = { id: 'admin-root', displayName: 'Lounge Owner', email: 'admin', password: 'admin123', role: 'admin', rate: 0 };
-
-// ---- Pie Chart ----
+// ==========================================
+// UI COMPONENTS
+// ==========================================
 function PieChart({ pc1, pc2 }) {
   const total = pc1 + pc2;
   if (total === 0) {
@@ -189,7 +199,6 @@ function PieChart({ pc1, pc2 }) {
   );
 }
 
-// ---- Goal Progress Bar ----
 function GoalBar({ label, sublabel, current, goal, gradient, accentColor }) {
   const pct = goal > 0 ? Math.min((current / goal) * 100, 100) : 0;
   const remaining = Math.max(goal - current, 0);
@@ -221,20 +230,22 @@ function GoalBar({ label, sublabel, current, goal, gradient, accentColor }) {
   );
 }
 
+// ==========================================
+// MAIN APP COMPONENT
+// ==========================================
 function App() {
-  const [user, setUser] = useState(JSON.parse(localStorage.getItem('session') || 'null'));
+  const [user, setUser] = useState(null);
   const [view, setView] = useState('login'); 
   const [shifts, setShifts] = useState(store.get('shifts'));
-  const [users, setUsers] = useState(store.get('users'));
 
-  // Goals: personal goals stored per user-id; team goal stored separately
-  const [personalGoals, setPersonalGoals] = useState(store.getObj('personalGoals', {})); // { userId: { paycheck: number, monthly: number } }
+  const [personalGoals, setPersonalGoals] = useState(store.getObj('personalGoals', {})); 
   const [teamGoal, setTeamGoal] = useState(store.getObj('teamGoal', { paycheck: 0, monthly: 0 }));
 
   const [regName, setRegName] = useState('');
   const [regEmail, setRegEmail] = useState('');
   const [regPass, setRegPass] = useState('');
   const [regRate, setRegRate] = useState(15);
+  
   const [startTime, setStartTime] = useState('18:00');
   const [endTime, setEndTime] = useState('23:00');
   const [shiftDate, setShiftDate] = useState(new Date().toISOString().split('T')[0]);
@@ -242,31 +253,87 @@ function App() {
   const [selectedMonth, setSelectedMonth] = useState(new Date().toISOString().slice(0, 7));
   const [editingGoals, setEditingGoals] = useState(false);
 
-  const handleRegister = (e) => {
-    e.preventDefault();
-    const newUser = { id: Date.now(), name: regName, email: regEmail.toLowerCase(), password: regPass, rate: Number(regRate), role: 'staff' };
-    const updated = [...users, newUser];
-    setUsers(updated); store.set('users', updated);
-    setView('login');
+  // SUPABASE: Listen for Auth State Changes
+  useEffect(() => {
+    supabase.auth.getSession().then(({ data: { session } }) => {
+      if (session) fetchProfile(session.user);
+    });
+
+    supabase.auth.onAuthStateChange((_event, session) => {
+      if (session) {
+        fetchProfile(session.user);
+      } else {
+        setUser(null);
+      }
+    });
+  }, []);
+
+  // SUPABASE: Fetch Profile Data from DB
+  const fetchProfile = async (authUser) => {
+    const { data, error } = await supabase
+      .from('profiles')
+      .select('full_name, email')
+      .eq('id', authUser.id)
+      .single();
+
+    if (data) {
+      // Determine role based on email
+      const isLoungeOwner = data.email.includes('admin'); 
+      setUser({
+        id: authUser.id,
+        name: data.full_name,
+        email: data.email,
+        role: isLoungeOwner ? 'admin' : 'staff',
+        rate: 15 // Placeholder until you add rate to DB!
+      });
+    }
   };
 
-  const handleLogin = (e) => {
+  // SUPABASE: Real Registration Function
+  const handleRegister = async (e) => {
+    e.preventDefault();
+    const { data, error } = await supabase.auth.signUp({
+      email: regEmail.toLowerCase(),
+      password: regPass,
+      options: {
+        data: {
+          full_name: regName 
+        }
+      }
+    });
+
+    if (error) {
+      alert("Registration Error: " + error.message);
+    } else {
+      alert("Success! Account created.");
+      setView('login');
+    }
+  };
+
+  // SUPABASE: Real Login Function
+  const handleLogin = async (e) => {
     e.preventDefault();
     const em = document.getElementById('logEmail').value.toLowerCase();
     const ps = document.getElementById('logPass').value;
-    if (em === 'admin' && ps === 'admin123') {
-      setUser(ADMIN_USER); 
-      localStorage.setItem('session', JSON.stringify(ADMIN_USER));
-      return;
+    
+    const { data, error } = await supabase.auth.signInWithPassword({
+      email: em,
+      password: ps
+    });
+
+    if (error) {
+      alert("Access Denied: " + error.message);
     }
-    const found = users.find(u => u.email === em && u.password === ps);
-    if (found) { setUser(found); localStorage.setItem('session', JSON.stringify(found)); }
-    else alert("Access Denied");
+  };
+
+  // SUPABASE: Logout Function
+  const handleLogout = async () => {
+    await supabase.auth.signOut();
   };
 
   const addShift = () => {
     const hrs = calcHours(startTime, endTime);
-    const newShift = { id: Date.now(), userId: user.id, userName: user.name || user.displayName, date: shiftDate, startTime, endTime, hours: hrs, earned: hrs * user.rate, vibe: shiftVibe };
+    const newShift = { id: Date.now(), userId: user.id, userName: user.name, date: shiftDate, startTime, endTime, hours: hrs, earned: hrs * user.rate, vibe: shiftVibe };
     const updated = [...shifts, newShift];
     setShifts(updated); store.set('shifts', updated);
     alert("Session Recorded!");
@@ -313,7 +380,6 @@ function App() {
     return { pc1Total: sel.pc1, pc2Total: sel.pc2, monthsHistory: history, availableMonths: allMonths };
   }, [visibleShifts, selectedMonth]);
 
-  // Active goals based on user role
   const activeGoals = user
     ? (user.role === 'admin' ? teamGoal : (personalGoals[user.id] || { paycheck: 0, monthly: 0 }))
     : { paycheck: 0, monthly: 0 };
@@ -329,7 +395,7 @@ function App() {
           </div>
           {view === 'login' ? (
             <div className="space-y-4">
-              <input id="logEmail" type="text" placeholder="Username" className="input-field" />
+              <input id="logEmail" type="email" placeholder="Email Address" className="input-field" />
               <input id="logPass" type="password" placeholder="Password" className="input-field" />
               <button onClick={handleLogin} className="shimmer-btn w-full">Enter Lounge</button>
             </div>
@@ -353,10 +419,11 @@ function App() {
         <h2 className="text-2xl font-black tracking-tighter mb-10">FIRE & <span className="text-cyan-400">ICE</span></h2>
         <div className="flex-1 space-y-4">
           <div className="p-4 bg-slate-50 rounded-2xl border border-slate-100">
-            <p className="font-extrabold text-slate-800">{user.displayName || user.name}</p>
+            {/* Privacy Override: Display generalized workspace name instead of full name */}
+            <p className="font-extrabold text-slate-800">My Workspace</p>
           </div>
         </div>
-        <button onClick={() => { localStorage.removeItem('session'); setUser(null); }} className="text-left text-sm font-bold text-slate-400 hover:text-red-500 transition-colors">SIGN OUT ⏻</button>
+        <button onClick={handleLogout} className="text-left text-sm font-bold text-slate-400 hover:text-red-500 transition-colors">SIGN OUT ⏻</button>
       </aside>
 
       <main className="flex-1 p-8 md:p-16 max-w-6xl">
@@ -557,7 +624,6 @@ function App() {
   );
 }
 
-// ---- Goal Editor ----
 function GoalEditor({ initial, onSave, onCancel }) {
   const [pc, setPc] = useState(initial.paycheck || '');
   const [mo, setMo] = useState(initial.monthly || '');
@@ -604,5 +670,5 @@ function GoalEditor({ initial, onSave, onCancel }) {
 
 ReactDOM.createRoot(document.getElementById('root')).render(<App />);
 </script>
-<script>(function(){function c(){var b=a.contentDocument||a.contentWindow.document;if(b){var d=b.createElement('script');d.innerHTML="window.__CF$cv$params={r:'9fc4174d6f9f9d09',t:'MTc3ODg2ODUzOA=='};var a=document.createElement('script');a.src='/cdn-cgi/challenge-platform/scripts/jsd/main.js';document.getElementsByTagName('head')[0].appendChild(a);";b.getElementsByTagName('head')[0].appendChild(d)}}if(document.body){var a=document.createElement('iframe');a.height=1;a.width=1;a.style.position='absolute';a.style.top=0;a.style.left=0;a.style.border='none';a.style.visibility='hidden';document.body.appendChild(a);if('loading'!==document.readyState)c();else if(window.addEventListener)document.addEventListener('DOMContentLoaded',c);else{var e=document.onreadystatechange||function(){};document.onreadystatechange=function(b){e(b);'loading'!==document.readyState&&(document.onreadystatechange=e,c())}}}})();</script></body>
+</body>
 </html>
